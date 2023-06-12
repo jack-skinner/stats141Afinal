@@ -1,0 +1,229 @@
+---
+title: "Final Project 141A"
+author: "Jack Skinner 919309588"
+date: '2023-04-24'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(dplyr)
+library(caret)
+library(e1071)
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, echo = FALSE}
+session=list()
+for(i in 1:18){
+  session[[i]]=readRDS(paste('./Sessions/session',i,'.rds',sep=''))
+    #print(session[[i]]$mouse_name)
+    #print(session[[i]]$date_exp)
+
+}
+finaltestdata=list()
+for(i in 1:2){
+  finaltestdata[[i]]=readRDS(paste('./TestData/test',i,'.rds',sep=''))
+    #print(finaltestdata[[i]]$mouse_name)
+    #print(finaltestdata[[i]]$date_exp)
+}
+```
+## Abstract
+
+This project analyzes a data set from mouse trials of a visual response test. I built a model to predict what the mouses behavior will be to a visual response by doing:
+
+    *  exploratory analysis to find the dependent and independent variables
+    *  organize the data for integration into the predictive model framework
+    *  train the model
+    *  executes against the test dataset and report findings.
+
+## 1. Introduction
+I was given a subset of data collected by Steinmetz et al. (2019). The subset set focused on four mice who underwent 18 total sessions consisting of hundreds of individual trials. In each trial, visual stimuli were presented randomly on two screens, one on each side. The contrast levels of the stimuli were {0, 0.25, 0.5, 1} and the mice were supposed to turn a wheel in the direction with a lower contrast. Doing so would reward them with a tree and feedback of 1, and failure would result in feedback of -1. While this was happening, their neuron activity was being recorded, focusing on neurons in different parts of the brain.  
+
+## 2. Exploratory analysis
+
+In this section I look through the data to find the candidates for the correct dependent and independent variables. I looked at the number spikes across different trials and sessions and compared them to each other.
+```{r, echo = FALSE}
+n.session = length(session)
+data_table <- tibble(
+  mouse_name = rep('name', n.session),
+  date_exp = rep('dt', n.session),
+  num_brain_area = rep(0, n.session),
+  num_neurons = rep(0, n.session),
+  num_trials =rep(0, n.session),
+  success_rate = rep(0, n.session)
+)
+for(i in 1:n.session){
+  temp = session[[i]];
+  data_table[i,1] = temp$mouse_name;
+  data_table[i,2] = temp$date_exp;
+  data_table[i,3] = length(unique(temp$brain_area));
+  data_table[i,4] = dim(temp$spks[[1]])[1];
+  data_table[i,5] = length(temp$feedback_type);
+  data_table[i,6] = mean(temp$feedback_type+1)/2;
+}
+kable(data_table, 'html', 2, table.attr = "class='table table-striped'")
+
+```
+To describe the data structers across sessions, I built a table highlighting some of the variables and factors found in the data set. First is mouse_name, which shows which of the four mice, Cori, Forssmann, Hench, or Lederberg, was the subject of the session. Cori did the least number of sessions, having done only three, while Lederberg did the most having done seven. Next is date_exp, which is the date the experiment took place. There was only a few days, if any, between sessions that studied the same mouse, but there was a considerable about of time between when each mouse did their sessions. num_brain_area shows how many different areas of the brain were being looked at, with at least one neuron in that area being monitored. The number ranged from 5 to 15. num_neurons shows how many neurons across all areas of the brain being monitored and num_trails shows how many trials were completed in that session. Finally, success rate is the number of trials with feedback type 1, which was awarded when turing the wheel in the correct direction, compared to the overall number of trials in that session. In session 17, Lederberg had the highest success rate at 0.83.
+```{r, echo = FALSE}
+neuron_sum1 <- c()
+  for(i in 1:40) {
+    counter <- 0
+    for(j in 1:length(session[[2]]$brain_area)){
+      temp_val <- (session[[2]]$spks[[7]][j,i] + 1)/2
+      counter <- counter + temp_val 
+    }
+    neuron_sum1 <- c(neuron_sum1, counter)
+  }
+trial_time1 <- c(session[[2]]$time[[7]])
+time_df1 <- data.frame(neuron_sum1, trial_time1)
+ggplot(time_df1, aes(x = trial_time1, y = neuron_sum1)) + geom_point() + labs(x = "Time", y = "Spike Count", main = "Session 2 Trial 7")
+neuron_sum2 <- c()
+  for(i in 1:40) {
+    counter <- 0
+    for(j in 1:length(session[[11]]$brain_area)){
+      temp_val <- (session[[11]]$spks[[59]][j,i] + 1)/2
+      counter <- counter + temp_val 
+    }
+    neuron_sum2 <- c(neuron_sum2, counter)
+  }
+trial_time2 <- c(session[[11]]$time[[59]])
+time_df2 <- data.frame(neuron_sum2, trial_time2)
+ggplot(time_df2, aes(x = trial_time2, y = neuron_sum2)) + geom_point() + labs(x = "Time", y = "Spike Count", main = "Session 11 Trial 59")
+
+```
+
+Here I looked at the neurological activity during a trial by looking at how many spikes occured during each interval of time, of which their were 40 in each trial. In both of trials I looked at, there seemed to be little variation between the amount of spikes in each interval, so I will assume that the number of spikes per interval was roughly consistent throughout each trial.
+
+#iii)
+```{r, echo = FALSE} 
+trial_num1 <- c()
+counter = 0
+for (i in 1:length(session[[5]]$feedback_type)){
+  counter = counter + 1
+  trial_num1 <- c(trial_num1, counter)
+}
+spks_1 <- c()
+for (i in 1:length(session[[5]]$feedback_type)){
+  temp_sum <- sum(session[[5]]$spks[[i]])
+  spks_1 <- c(spks_1, temp_sum)
+}
+spikes_df1 <- data.frame(spks_1, trial_num1)
+ggplot(spikes_df1, aes(x = trial_num1, y = spks_1)) + geom_point() + labs(x = "Trial Number", y = "Total Spikes", main = "Session 5")
+
+trial_num2 <- c()
+counter = 0
+for (i in 1:length(session[[15]]$feedback_type)){
+  counter = counter + 1
+  trial_num2 <- c(trial_num2, counter)
+}
+spks_2 <- c()
+for (i in 1:length(session[[15]]$feedback_type)){
+  temp_sum <- sum(session[[15]]$spks[[i]])
+  spks_2 <- c(spks_2, temp_sum)
+}
+spikes_df2 <- data.frame(spks_2, trial_num2)
+ggplot(spikes_df2, aes(x = trial_num2, y = spks_2)) + geom_point() + labs(x = "Trial Number", y = "Total Spikes", main = "Session 15")
+```
+
+Next I looked at the total number of spikes that occurred in each trial, and graphed them over the trial number to see if the total number changed as the trials went on. After looking at both graphs, it seems that while the number of neurons varies throught the session, the number is a lot more random at the start of the session, but more concentrated as the end of the session approaches. I would assume that as the trials go on, the mice don't need to think as hard about which way to turn the wheel.
+
+#iv)
+```{r, echo = FALSE}
+function_1 <- function(x) {
+  spks_vector <- c()
+  for (i in 1:length(session[[x]]$feedback_type)){
+    temp_sum <- sum(session[[x]]$spks[[i]]) / length(session[[x]]$brain_area)
+    spks_vector <- c(spks_vector, temp_sum)
+  }
+    return(spks_vector)
+}
+b1 <- function_1(1)
+b2 <- function_1(2)
+b3 <- function_1(3)
+b4 <- function_1(4)
+b5 <- function_1(5)
+b6 <- function_1(6)
+b7 <- function_1(7)
+b8 <- function_1(8)
+b9 <- function_1(9)
+b10 <- function_1(10)
+b11 <- function_1(11)
+b12 <- function_1(12)
+b13 <- function_1(13)
+b14 <- function_1(14)
+b15 <- function_1(15)
+b16 <- function_1(16)
+b17 <- function_1(17)
+b18 <- function_1(18)
+data <- list(b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15, b16, b17, b18)
+data_names <- c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18")
+
+boxplot(data, names = data_names, xlab = "Session", ylab = "Neurons", main = "Neurons per Trial")
+```
+
+Finally I look at the average number of spikes fired in each trial relative to the number of neurons being monitored in each session and compared them to each other to look for homogeneity and heterogeneity across sessions and mice. There doesn't seem to be any consistency between any of the sessions or mice, as both the mean and distribution seem to vary greatly between sessions and mice.
+
+## Section 3 Data integration
+
+In this section, I created the data frame that will be used to train the predictive model, I pulled contrast_left, constrast_right and the feedback_type and tagged the feedback_type attribute as the factor. I choose not to include neuron or spike because my exploratory analysis was inconclusive on the relevance of that data type. 
+```{r, echo = TRUE}
+behavior_df <- data.frame()
+for(i.s in 1:length(n.session)) {
+  for(i.t in 1:length(session[[i.s]]$contrast_left)){
+    contrast_left <- session[[i.s]]$contrast_left[[i.t]]
+    contrast_right <- session[[i.s]]$contrast_right[[i.t]]
+    feedback_type <- session[[i.s]]$feedback_type[[i.t]]
+    behavior_df <- rbind(behavior_df, data.frame(contrast_left, contrast_right, feedback_type))
+  }
+}
+behavior_df$feedback_type <- as.factor(behavior_df$feedback_type)
+cor_filter <- nearZeroVar(behavior_df)
+cor_features <- caret::findCorrelation(cor(behavior_df[, -cor_filter]), cutoff = 0.6)
+selected_features <- setdiff(names(behavior_df), cor_filter)[cor_features]
+selected_df <- behavior_df[, c("contrast_left", "contrast_right", "feedback_type", selected_features)]
+
+
+```
+
+
+## Section 4 Predictive modeling.
+```{r, echo = TRUE}
+set.seed(100)
+train_indices <- sample(nrow(selected_df), nrow(selected_df) * 0.7)
+train_data <- selected_df[train_indices, ]
+test_data <- selected_df[-train_indices, ]
+svm_model <- svm(feedback_type ~ ., data = train_data, kernel = "radial", cost = 1)
+print(svm_model)
+predictions <- predict(svm_model, newdat = test_data)
+confusion_matrix <- table(Actual = test_data$feedback_type, Predict = predictions)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(confusion_matrix)
+print(paste("Accuracy:", accuracy))
+```
+## Section 5 Prediction performance on the test sets
+
+```{r, echo= FALSE}
+
+finaltest_df <- data.frame()
+for(i.s in 1:length(finaltestdata)) {
+  for(i.t in 1:length(finaltestdata[[i.s]]$contrast_left)){
+    contrast_left <- finaltestdata[[i.s]]$contrast_left[[i.t]]
+    contrast_right <- finaltestdata[[i.s]]$contrast_right[[i.t]]
+    feedback_type <- finaltestdata[[i.s]]$feedback_type[[i.t]]
+    finaltest_df <- rbind(finaltest_df, data.frame(contrast_left, contrast_right, feedback_type))
+  }
+}
+
+
+predictions <- predict(svm_model, newdat = finaltest_df)
+confusion_matrix <- table(Actual = finaltest_df$feedback_type, Predict = predictions)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(confusion_matrix)
+print(paste("Accuracy:", accuracy))
+```
+## Section 5 Discussion
+
+After putting the test data into a data frame and running it into my prediction model, it was able to correctly predict the feedback type of 136 of the 200 test trials for an accurary of .68. I tried adding more variable like mouse_name and date_exp to my prediciion model, but they had no significant impact on the prediction model's accuracy. My test data did not reach the same level of accuracy as the training data, but that might be due to natural variance in the data set. 
